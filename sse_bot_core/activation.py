@@ -283,6 +283,7 @@ class ActivationService:
 
         guild_filter = {
             "bot_activation_id": self.activation_id,
+            "discord_bot_id": str(discord_bot_id),
             "guild_id": str(guild_id),
             "status": "active",
         }
@@ -369,7 +370,16 @@ class ActivationService:
 
 
 async def setup_activation(bot: discord.Client) -> ActivationService:
-    """Install three-state activation and guild-specific command visibility."""
+    """Install three-state activation and guild-specific command visibility.
+
+    Safe to call more than once on the same bot instance.
+    """
+    existing = getattr(bot, "_sse_activation_service", None)
+    if existing is not None:
+        return existing
+    if not hasattr(bot, "tree"):
+        raise TypeError("setup_activation(bot) requires a discord.py client with a command tree.")
+
     uri = os.getenv("MONGODB_URI", "").strip()
     activation_id = os.getenv("BOT_ACTIVATION_ID", "").strip()
     if not uri:
@@ -385,8 +395,13 @@ async def setup_activation(bot: discord.Client) -> ActivationService:
         appname="SSE-Bot-Activation",
     )
     service = ActivationService(client, activation_id)
-    await asyncio.to_thread(client.admin.command, "ping")
-    await asyncio.to_thread(service.initialize_indexes)
+    try:
+        await asyncio.to_thread(client.admin.command, "ping")
+        await asyncio.to_thread(service.initialize_indexes)
+    except Exception:
+        client.close()
+        log.exception("Could not initialize the SSE activation database")
+        raise
 
     # --------------------------------------------------
     # COMMAND SYNCHRONIZATION
@@ -692,9 +707,7 @@ async def setup_activation(bot: discord.Client) -> ActivationService:
     # AUTOMATIC GUILD SYNCHRONIZATION
     # --------------------------------------------------
     async def activation_on_ready():
-        if getattr(bot, "_sse_initial_sync_done", False):
-            return
-        setattr(bot, "_sse_initial_sync_done", True)
+        # Re-sync on reconnect as Hub-side status may have changed while offline.
         await sync_all_guilds()
 
     async def activation_on_guild_join(guild: discord.Guild):
