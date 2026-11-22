@@ -663,6 +663,8 @@ async def setup_activation(bot: discord.Client) -> ActivationService:
         serverSelectionTimeoutMS=15000,
         connectTimeoutMS=10000,
         appname="SSE-Bot-Activation",
+        tz_aware=True,
+        tzinfo=timezone.utc,
     )
     service = ActivationService(client, activation_id)
     try:
